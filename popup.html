@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>视频自动截图工具</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>视频自动截图工具</h1>
+
+    <div class="status-section">
+      <div id="status">状态: 未启动</div>
+      <div id="video-count">已截图: 0</div>
+    </div>
+
+    <div class="tabs-container">
+      <div class="tabs">
+        <button class="tab-button active" data-tab="basic">基本设置</button>
+        <button class="tab-button" data-tab="merge">合并选项</button>
+        <button class="tab-button" data-tab="advanced">高级选项</button>
+      </div>
+
+      <div class="tab-content active" id="basic-tab">
+        <div class="control-section">
+          <div class="form-group">
+            <label for="interval">截图间隔 (秒):</label>
+            <input type="number" id="interval" min="0.1" step="0.1" value="1">
+          </div>
+
+          <div class="form-group">
+            <label for="quality">图片质量 (1-100):</label>
+            <input type="number" id="quality" min="1" max="100" value="90">
+          </div>
+
+          <div class="form-group">
+            <label for="format">图片格式:</label>
+            <select id="format">
+              <option value="png">PNG</option>
+              <option value="jpeg">JPEG</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="merge-tab">
+        <div class="control-section">
+          <div class="form-group">
+            <label for="merge-count">合并截图数量:</label>
+            <input type="number" id="merge-count" min="5" max="100" value="20">
+          </div>
+
+          <div class="form-group">
+            <label for="merge-format">合并格式:</label>
+            <select id="merge-format">
+              <option value="html">HTML</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+
+          <div class="form-group checkbox-group">
+            <input type="checkbox" id="keep-originals">
+            <label for="keep-originals">保留原始截图</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="advanced-tab">
+        <div class="control-section">
+          <div class="form-group">
+            <label for="auto-stop">自动停止时间(分钟):</label>
+            <input type="number" id="auto-stop" min="0" step="1" value="0">
+          </div>
+          <div class="form-group checkbox-group">
+            <input type="checkbox" id="enable-auto-stop">
+            <label for="enable-auto-stop">启用自动停止</label>
+          </div>
+
+          <div class="form-group">
+            <label for="duplicate-threshold">重复图片阈值 (%):</label>
+            <input type="number" id="duplicate-threshold" min="50" max="100" value="90">
+          </div>
+          <div class="form-group checkbox-group">
+            <input type="checkbox" id="enable-duplicate-detection" checked>
+            <label for="enable-duplicate-detection">跳过重复图片</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="button-section">
+      <button id="detect-videos" class="btn-detect">检测视频</button>
+      <button id="start-capture" class="btn-start" disabled title="需要先检测到视频才能开始截图">开始截图</button>
+      <button id="stop-capture" class="btn-stop" disabled title="需要先开始截图才能停止">停止截图</button>
+    </div>
+
+    <div class="button-status-hint" id="button-hint">
+      提示: 请先点击"检测视频"按钮
+    </div>
+
+    <div class="info-section">
+      <p>截图将保存到您的默认下载位置。</p>
+      <p class="version">版本: 1.0.2</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
