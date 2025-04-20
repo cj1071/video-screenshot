@@ -205,12 +205,32 @@ document.addEventListener('DOMContentLoaded', function() {
           if (chrome.runtime.lastError) {
             console.log('发送消息错误:', chrome.runtime.lastError.message);
             // 尝试注入content script
-            injectContentScript(tabs[0].id, function() {
-              // 注入后重新发送消息
+            injectContentScript(tabs[0].id, function(success) {
+              if (!success) {
+                console.error('注入content script失败，无法检测视频');
+                stopDetection();
+                statusElement.textContent = '状态: 无法检测视频，请刷新页面后重试';
+                buttonHintElement.textContent = '提示: 无法检测视频，请刷新页面后重试';
+                return;
+              }
+
+              // 注入成功后重新发送消息
               setTimeout(function() {
-                chrome.tabs.sendMessage(tabs[0].id, {action: 'startDetection', maxAttempts: maxDetectionAttempts}, function(response) {
-                  console.log('重新发送开始检测视频响应:', response);
-                });
+                try {
+                  chrome.tabs.sendMessage(tabs[0].id, {action: 'startDetection', maxAttempts: maxDetectionAttempts}, function(response) {
+                    if (chrome.runtime.lastError) {
+                      console.error('重新发送消息仍然失败:', chrome.runtime.lastError.message);
+                      stopDetection();
+                      statusElement.textContent = '状态: 无法检测视频，请刷新页面后重试';
+                      buttonHintElement.textContent = '提示: 无法检测视频，请刷新页面后重试';
+                    } else {
+                      console.log('重新发送开始检测视频响应:', response);
+                    }
+                  });
+                } catch (e) {
+                  console.error('重新发送消息异常:', e);
+                  stopDetection();
+                }
               }, 500);
             });
           } else if (response) {
@@ -220,13 +240,29 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch (error) {
         console.error('发送消息时出错:', error);
         // 尝试注入content script
-        injectContentScript(tabs[0].id, function() {
-          // 注入后重新发送消息
+        injectContentScript(tabs[0].id, function(success) {
+          if (!success) {
+            console.error('注入content script失败，无法检测视频');
+            stopDetection();
+            statusElement.textContent = '状态: 无法检测视频，请刷新页面后重试';
+            buttonHintElement.textContent = '提示: 无法检测视频，请刷新页面后重试';
+            return;
+          }
+
+          // 注入成功后重新发送消息
           setTimeout(function() {
             try {
-              chrome.tabs.sendMessage(tabs[0].id, {action: 'startDetection', maxAttempts: maxDetectionAttempts});
+              chrome.tabs.sendMessage(tabs[0].id, {action: 'startDetection', maxAttempts: maxDetectionAttempts}, function(response) {
+                if (chrome.runtime.lastError) {
+                  console.error('重新发送消息仍然失败:', chrome.runtime.lastError.message);
+                  stopDetection();
+                } else {
+                  console.log('重新发送开始检测视频响应:', response);
+                }
+              });
             } catch (e) {
-              console.error('重新发送消息失败:', e);
+              console.error('重新发送消息异常:', e);
+              stopDetection();
             }
           }, 500);
         });
@@ -353,17 +389,40 @@ document.addEventListener('DOMContentLoaded', function() {
   // 注入content script
   function injectContentScript(tabId, callback) {
     console.log('正在注入content script...');
-    chrome.scripting.executeScript({
-      target: {tabId: tabId},
-      files: ['content.js']
-    }, function(_result) {
-      if (chrome.runtime.lastError) {
-        console.error('注入content script失败:', chrome.runtime.lastError.message);
-      } else {
-        console.log('content script注入成功');
-      }
-      if (callback) callback();
-    });
+    try {
+      // 检查当前标签页URL
+      chrome.tabs.get(tabId, function(tab) {
+        if (chrome.runtime.lastError) {
+          console.error('获取标签页信息失败:', chrome.runtime.lastError.message);
+          if (callback) callback(false);
+          return;
+        }
+
+        // 检查URL是否是chrome-extension://
+        if (tab.url.startsWith('chrome-extension://') || tab.url.startsWith('chrome://')) {
+          console.error('无法在扩展页面上注入脚本');
+          if (callback) callback(false);
+          return;
+        }
+
+        // 使用executeScript注入脚本
+        chrome.scripting.executeScript({
+          target: {tabId: tabId},
+          files: ['content.js']
+        }, function(results) {
+          if (chrome.runtime.lastError) {
+            console.error('注入content script失败:', chrome.runtime.lastError.message);
+            if (callback) callback(false);
+          } else {
+            console.log('content script注入成功');
+            if (callback) callback(true);
+          }
+        });
+      });
+    } catch (error) {
+      console.error('注入content script时发生异常:', error);
+      if (callback) callback(false);
+    }
   }
 
   // 保存设置函数
@@ -454,38 +513,54 @@ document.addEventListener('DOMContentLoaded', function() {
           return;
         }
 
-        // 尝试从当前标签页获取最新状态
-        try {
-          chrome.tabs.sendMessage(tabs[0].id, {action: 'getStatus'}, function(response) {
-            // 检查runtime.lastError
-            if (chrome.runtime.lastError) {
-              console.log('发送getStatus消息错误:', chrome.runtime.lastError.message);
-              // 直接使用存储中的状态
-              updateUIFromStorage(state);
-              return;
-            }
+        // 检查当前标签页URL
+        chrome.tabs.get(tabs[0].id, function(tab) {
+          if (chrome.runtime.lastError) {
+            console.error('获取标签页信息失败:', chrome.runtime.lastError.message);
+            updateUIFromStorage(state);
+            return;
+          }
 
-            if (response) {
-              console.log('从内容脚本获取状态:', response);
-              // 合并内容脚本状态和存储状态
-              const mergedState = {...state, ...response};
-              // 确保视频检测状态正确
-              if (state.videoDetected) {
-                mergedState.videoDetected = true;
-                mergedState.videoCount = state.videoCount || 0;
+          // 检查URL是否是chrome-extension://
+          if (tab.url.startsWith('chrome-extension://') || tab.url.startsWith('chrome://')) {
+            console.log('当前标签页是扩展页面，使用存储中的状态');
+            updateUIFromStorage(state);
+            return;
+          }
+
+          // 尝试从当前标签页获取最新状态
+          try {
+            chrome.tabs.sendMessage(tabs[0].id, {action: 'getStatus'}, function(response) {
+              // 检查runtime.lastError
+              if (chrome.runtime.lastError) {
+                console.log('发送getStatus消息错误:', chrome.runtime.lastError.message);
+                // 直接使用存储中的状态
+                updateUIFromStorage(state);
+                return;
               }
-              updateUIFromStorage(mergedState);
-            } else {
-              // 如果无法从内容脚本获取状态，则使用存储中的状态
-              console.log('无法从内容脚本获取状态，使用存储中的状态');
-              updateUIFromStorage(state);
-            }
-          });
-        } catch (error) {
-          console.error('发送消息时出错:', error);
-          // 直接使用存储中的状态
-          updateUIFromStorage(state);
-        }
+
+              if (response) {
+                console.log('从内容脚本获取状态:', response);
+                // 合并内容脚本状态和存储状态
+                const mergedState = {...state, ...response};
+                // 确保视频检测状态正确
+                if (state.videoDetected) {
+                  mergedState.videoDetected = true;
+                  mergedState.videoCount = state.videoCount || 0;
+                }
+                updateUIFromStorage(mergedState);
+              } else {
+                // 如果无法从内容脚本获取状态，则使用存储中的状态
+                console.log('无法从内容脚本获取状态，使用存储中的状态');
+                updateUIFromStorage(state);
+              }
+            });
+          } catch (error) {
+            console.error('发送消息时出错:', error);
+            // 直接使用存储中的状态
+            updateUIFromStorage(state);
+          }
+        });
       });
     });
   }
@@ -682,30 +757,122 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
 
-      console.log('发送开始截图消息到内容脚本');
-      try {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: 'startCapture',
-          settings: {
-            interval: interval,
-            quality: quality,
-            format: format,
-            mergeCount: mergeCount,
-            mergeFormat: mergeFormat,
-            keepOriginals: keepOriginals,
-            autoStopMinutes: autoStopMinutes,
-            enableAutoStop: enableAutoStop,
-            duplicateThreshold: duplicateThreshold,
-            enableDuplicateDetection: enableDuplicateDetection
-          }
-        }, function(response) {
-          // 检查runtime.lastError
-          if (chrome.runtime.lastError) {
-            console.log('发送开始截图消息错误:', chrome.runtime.lastError.message);
-            // 尝试注入content script
-            injectContentScript(tabs[0].id, function() {
-              // 注入后重新发送消息
-              setTimeout(function() {
+      // 检查当前标签页URL
+      chrome.tabs.get(tabs[0].id, function(tab) {
+        if (chrome.runtime.lastError) {
+          console.error('获取标签页信息失败:', chrome.runtime.lastError.message);
+          statusElement.textContent = '状态: 无法获取标签页信息';
+          buttonHintElement.textContent = '提示: 请刷新页面后重试';
+          return;
+        }
+
+        // 检查URL是否是chrome-extension://
+        if (tab.url.startsWith('chrome-extension://') || tab.url.startsWith('chrome://')) {
+          console.error('无法在扩展页面上截图');
+          statusElement.textContent = '状态: 无法在扩展页面上截图';
+          buttonHintElement.textContent = '提示: 请在网页上使用此功能';
+          return;
+        }
+
+        console.log('发送开始截图消息到内容脚本');
+        try {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            action: 'startCapture',
+            settings: {
+              interval: interval,
+              quality: quality,
+              format: format,
+              mergeCount: mergeCount,
+              mergeFormat: mergeFormat,
+              keepOriginals: keepOriginals,
+              autoStopMinutes: autoStopMinutes,
+              enableAutoStop: enableAutoStop,
+              duplicateThreshold: duplicateThreshold,
+              enableDuplicateDetection: enableDuplicateDetection
+            }
+          }, function(response) {
+            // 检查runtime.lastError
+            if (chrome.runtime.lastError) {
+              console.log('发送开始截图消息错误:', chrome.runtime.lastError.message);
+              // 尝试注入content script
+              injectContentScript(tabs[0].id, function(success) {
+                if (!success) {
+                  console.error('注入content script失败，无法开始截图');
+                  statusElement.textContent = '状态: 无法开始截图，请刷新页面后重试';
+                  buttonHintElement.textContent = '提示: 无法开始截图，请刷新页面后重试';
+                  return;
+                }
+
+                // 注入成功后重新发送消息
+                setTimeout(function() {
+                  try {
+                    chrome.tabs.sendMessage(tabs[0].id, {
+                      action: 'startCapture',
+                      settings: {
+                        interval: interval,
+                        quality: quality,
+                        format: format,
+                        mergeCount: mergeCount,
+                        mergeFormat: mergeFormat,
+                        keepOriginals: keepOriginals,
+                        autoStopMinutes: autoStopMinutes,
+                        enableAutoStop: enableAutoStop,
+                        duplicateThreshold: duplicateThreshold,
+                        enableDuplicateDetection: enableDuplicateDetection
+                      }
+                    }, function(response) {
+                      if (chrome.runtime.lastError) {
+                        console.error('重新发送消息仍然失败:', chrome.runtime.lastError.message);
+                        statusElement.textContent = '状态: 无法开始截图，请刷新页面后重试';
+                        buttonHintElement.textContent = '提示: 无法开始截图，请刷新页面后重试';
+                      } else {
+                        console.log('重新发送开始截图消息响应:', response);
+                        // 强制更新控制面板状态
+                        try {
+                          chrome.tabs.sendMessage(tabs[0].id, {
+                            action: 'updateControlPanel',
+                            status: 'active'
+                          });
+                        } catch (e) {
+                          console.error('更新控制面板状态失败:', e);
+                        }
+                      }
+                    });
+                  } catch (e) {
+                    console.error('重新发送消息异常:', e);
+                    statusElement.textContent = '状态: 无法开始截图，请刷新页面后重试';
+                    buttonHintElement.textContent = '提示: 无法开始截图，请刷新页面后重试';
+                  }
+                }, 500);
+              });
+              return;
+            }
+
+            console.log('开始截图消息响应:', response);
+            // 强制更新控制面板状态
+            try {
+              chrome.tabs.sendMessage(tabs[0].id, {
+                action: 'updateControlPanel',
+                status: 'active'
+              });
+            } catch (e) {
+              console.error('更新控制面板状态失败:', e);
+            }
+          });
+        } catch (error) {
+          console.error('发送开始截图消息时出错:', error);
+          // 尝试注入content script
+          injectContentScript(tabs[0].id, function(success) {
+            if (!success) {
+              console.error('注入content script失败，无法开始截图');
+              statusElement.textContent = '状态: 无法开始截图，请刷新页面后重试';
+              buttonHintElement.textContent = '提示: 无法开始截图，请刷新页面后重试';
+              return;
+            }
+
+            // 注入成功后重新发送消息
+            setTimeout(function() {
+              try {
                 chrome.tabs.sendMessage(tabs[0].id, {
                   action: 'startCapture',
                   settings: {
@@ -721,53 +888,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     enableDuplicateDetection: enableDuplicateDetection
                   }
                 }, function(response) {
-                  console.log('重新发送开始截图消息响应:', response);
-                  // 强制更新控制面板状态
-                  chrome.tabs.sendMessage(tabs[0].id, {
-                    action: 'updateControlPanel',
-                    status: 'active'
-                  });
+                  if (chrome.runtime.lastError) {
+                    console.error('重新发送消息仍然失败:', chrome.runtime.lastError.message);
+                    statusElement.textContent = '状态: 无法开始截图，请刷新页面后重试';
+                    buttonHintElement.textContent = '提示: 无法开始截图，请刷新页面后重试';
+                  } else {
+                    console.log('重新发送开始截图消息响应:', response);
+                  }
                 });
-              }, 500);
-            });
-            return;
-          }
-
-          console.log('开始截图消息响应:', response);
-          // 强制更新控制面板状态
-          chrome.tabs.sendMessage(tabs[0].id, {
-            action: 'updateControlPanel',
-            status: 'active'
+              } catch (e) {
+                console.error('重新发送开始截图消息失败:', e);
+                statusElement.textContent = '状态: 无法开始截图，请刷新页面后重试';
+                buttonHintElement.textContent = '提示: 无法开始截图，请刷新页面后重试';
+              }
+            }, 500);
           });
-        });
-      } catch (error) {
-        console.error('发送开始截图消息时出错:', error);
-        // 尝试注入content script
-        injectContentScript(tabs[0].id, function() {
-          // 注入后重新发送消息
-          setTimeout(function() {
-            try {
-              chrome.tabs.sendMessage(tabs[0].id, {
-                action: 'startCapture',
-                settings: {
-                  interval: interval,
-                  quality: quality,
-                  format: format,
-                  mergeCount: mergeCount,
-                  mergeFormat: mergeFormat,
-                  keepOriginals: keepOriginals,
-                  autoStopMinutes: autoStopMinutes,
-                  enableAutoStop: enableAutoStop,
-                  duplicateThreshold: duplicateThreshold,
-                  enableDuplicateDetection: enableDuplicateDetection
-                }
-              });
-            } catch (e) {
-              console.error('重新发送开始截图消息失败:', e);
-            }
-          }, 500);
-        });
-      }
+        }
+      });
     });
 
     // Update UI
@@ -803,51 +940,135 @@ document.addEventListener('DOMContentLoaded', function() {
           return;
         }
 
-        try {
-          chrome.tabs.sendMessage(tabs[0].id, {action: 'stopCapture'}, function(response) {
-            // 检查runtime.lastError
-            if (chrome.runtime.lastError) {
-              console.log('发送停止截图消息错误:', chrome.runtime.lastError.message);
-              // 尝试注入content script
-              injectContentScript(tabs[0].id, function() {
-                // 注入后重新发送消息
-                setTimeout(function() {
-                  chrome.tabs.sendMessage(tabs[0].id, {action: 'stopCapture'}, function(response) {
-                    console.log('重新发送停止截图消息响应:', response);
-                    // 强制更新控制面板状态
-                    chrome.tabs.sendMessage(tabs[0].id, {
-                      action: 'updateControlPanel',
-                      status: 'stopped'
-                    });
-                  });
-                }, 500);
-              });
-              return;
-            }
+        // 检查当前标签页URL
+        chrome.tabs.get(tabs[0].id, function(tab) {
+          if (chrome.runtime.lastError) {
+            console.error('获取标签页信息失败:', chrome.runtime.lastError.message);
+            // 即使无法获取标签页信息，也要重置状态
+            updateUIAfterStop();
+            return;
+          }
 
-            console.log('停止截图响应:', response);
+          // 检查URL是否是chrome-extension://
+          if (tab.url.startsWith('chrome-extension://') || tab.url.startsWith('chrome://')) {
+            console.log('当前标签页是扩展页面，直接重置状态');
+            updateUIAfterStop();
+            return;
+          }
 
-            // 强制更新控制面板状态
-            chrome.tabs.sendMessage(tabs[0].id, {
-              action: 'updateControlPanel',
-              status: 'stopped'
-            });
-          });
-        } catch (error) {
-          console.error('发送停止截图消息时出错:', error);
-          // 尝试注入content script
-          injectContentScript(tabs[0].id, function() {
-            // 注入后重新发送消息
-            setTimeout(function() {
-              try {
-                chrome.tabs.sendMessage(tabs[0].id, {action: 'stopCapture'});
-              } catch (e) {
-                console.error('重新发送停止截图消息失败:', e);
+          try {
+            chrome.tabs.sendMessage(tabs[0].id, {action: 'stopCapture'}, function(response) {
+              // 检查runtime.lastError
+              if (chrome.runtime.lastError) {
+                console.log('发送停止截图消息错误:', chrome.runtime.lastError.message);
+                // 尝试注入content script
+                injectContentScript(tabs[0].id, function(success) {
+                  if (!success) {
+                    console.error('注入content script失败，直接重置状态');
+                    updateUIAfterStop();
+                    return;
+                  }
+
+                  // 注入成功后重新发送消息
+                  setTimeout(function() {
+                    try {
+                      chrome.tabs.sendMessage(tabs[0].id, {action: 'stopCapture'}, function(response) {
+                        if (chrome.runtime.lastError) {
+                          console.error('重新发送停止消息仍然失败:', chrome.runtime.lastError.message);
+                        } else {
+                          console.log('重新发送停止截图消息响应:', response);
+                          // 强制更新控制面板状态
+                          try {
+                            chrome.tabs.sendMessage(tabs[0].id, {
+                              action: 'updateControlPanel',
+                              status: 'stopped'
+                            });
+                          } catch (e) {
+                            console.error('更新控制面板状态失败:', e);
+                          }
+                        }
+                        // 无论成功与否，都更新UI
+                        updateUIAfterStop();
+                      });
+                    } catch (e) {
+                      console.error('重新发送停止截图消息异常:', e);
+                      updateUIAfterStop();
+                    }
+                  }, 500);
+                });
+                return;
               }
-            }, 500);
-          });
-        }
+
+              console.log('停止截图响应:', response);
+
+              // 强制更新控制面板状态
+              try {
+                chrome.tabs.sendMessage(tabs[0].id, {
+                  action: 'updateControlPanel',
+                  status: 'stopped'
+                });
+              } catch (e) {
+                console.error('更新控制面板状态失败:', e);
+              }
+
+              // 更新UI
+              updateUIAfterStop();
+            });
+          } catch (error) {
+            console.error('发送停止截图消息时出错:', error);
+            // 尝试注入content script
+            injectContentScript(tabs[0].id, function(success) {
+              if (!success) {
+                console.error('注入content script失败，直接重置状态');
+                updateUIAfterStop();
+                return;
+              }
+
+              // 注入成功后重新发送消息
+              setTimeout(function() {
+                try {
+                  chrome.tabs.sendMessage(tabs[0].id, {action: 'stopCapture'}, function(response) {
+                    if (chrome.runtime.lastError) {
+                      console.error('重新发送停止消息仍然失败:', chrome.runtime.lastError.message);
+                    } else {
+                      console.log('重新发送停止截图消息响应:', response);
+                    }
+                    // 无论成功与否，都更新UI
+                    updateUIAfterStop();
+                  });
+                } catch (e) {
+                  console.error('重新发送停止截图消息异常:', e);
+                  updateUIAfterStop();
+                }
+              }, 500);
+            });
+          }
+        });
       });
+
+      // 停止截图后更新UI的函数
+      function updateUIAfterStop() {
+        // Update UI
+        statusElement.textContent = '状态: 未启动';
+        stopButton.disabled = true;
+
+        // 停止截图后，保持视频检测状态，使开始按钮保持可用
+        chrome.storage.local.get(['videoDetected', 'videoCount'], function(result) {
+          if (result.videoDetected) {
+            // 如果之前检测到了视频，保持开始按钮可用
+            startButton.disabled = false;
+            detectButton.disabled = true;
+            detectButton.textContent = '已检测到视频';
+            buttonHintElement.textContent = '提示: 点击"开始截图"按钮开始截取视频画面';
+          } else {
+            // 如果之前没有检测到视频，启用检测按钮
+            startButton.disabled = true;
+            detectButton.disabled = false;
+            detectButton.textContent = '检测视频';
+            buttonHintElement.textContent = '提示: 请先点击"检测视频"按钮';
+          }
+        });
+      }
 
       // Update UI
       statusElement.textContent = '状态: 未启动';

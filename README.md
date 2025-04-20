@@ -2,7 +2,7 @@
 
 一个强大的 Chrome 扩展程序，可以自动截取网页上播放的视频画面，并保存到本地。
 
-![版本](https://img.shields.io/badge/版本-1.0.2-blue)
+![版本](https://img.shields.io/badge/版本-1.0.3-blue)
 ![许可证](https://img.shields.io/badge/许可证-MIT-green)
 
 ## ✨ 主要功能
@@ -67,6 +67,13 @@
 - 使用HTML5拖拽API实现可拖拽控制面板
 
 ## 📋 版本历史
+
+### 版本 1.0.3
+- 修复 "Receiving end does not exist" 通信错误
+- 修复 "Cannot access a chrome-extension:// URL of different extension" 错误
+- 改进错误处理机制，提供更好的用户反馈
+- 添加对扩展页面的检测，避免在扩展页面上尝试使用不支持的功能
+- 添加 "tabs" 权限，确保扩展程序能够访问标签页信息
 
 ### 版本 1.0.2
 - 修复控制面板停止按钮后配置页面开始按钮不恢复可点击状态的问题
