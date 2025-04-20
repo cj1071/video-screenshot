@@ -1,6 +1,14 @@
-// 防止重复初始化
-if (typeof window.videoScreenshotExtensionInitialized === 'undefined') {
+// 使用立即执行函数来避免全局变量污染
+(function() {
+  // 检查是否已经初始化
+  if (window.videoScreenshotExtensionInitialized) {
+    console.log('视频截图扩展已经初始化，跳过重复初始化');
+    return;
+  }
+
+  // 设置初始化标志
   window.videoScreenshotExtensionInitialized = true;
+  console.log('初始化视频截图扩展...');
 
   // Global variables
   var captureInterval = null;
@@ -174,13 +182,20 @@ function initialize() {
     // 如果已经有一个定时器在运行，先清除它
     if (periodicIframeCheckInterval) {
       clearInterval(periodicIframeCheckInterval);
+      periodicIframeCheckInterval = null;
+    }
+
+    // 如果检测已经停止，不启动新的定时器
+    if (!isDetectionActive && videoElements.length === 0) {
+      console.log('检测已停止，不启动定期检查iframe');
+      return;
     }
 
     // 启动新的定时器
     periodicIframeCheckInterval = setInterval(() => {
-      // 如果已经找到了视频，则停止定期检查
-      if (videoElements.length > 0) {
-        console.log('已找到视频，停止定期检查iframe');
+      // 如果已经找到了视频或检测已停止，则停止定期检查
+      if (videoElements.length > 0 || !isDetectionActive) {
+        console.log('已找到视频或检测已停止，停止定期检查iframe');
         clearInterval(periodicIframeCheckInterval);
         periodicIframeCheckInterval = null;
         return;
@@ -194,25 +209,7 @@ function initialize() {
   // 启动定期检查
   startPeriodicIframeCheck();
 
-  // Listen for messages from the popup
-  chrome.runtime.onMessage.addListener(function(request, _sender, sendResponse) {
-    switch (request.action) {
-      case 'getVideoCount':
-        sendResponse({videoCount: videoElements.length});
-        break;
-
-      case 'startCapture':
-        startCapture(request.settings);
-        sendResponse({success: true});
-        break;
-
-      case 'stopCapture':
-        stopCapture();
-        sendResponse({success: true});
-        break;
-    }
-    return true; // Keep the message channel open for async responses
-  });
+  // 消息监听器已移动到文件底部
 }
 
 // Detect all video elements on the page including those in iframes
@@ -1835,11 +1832,65 @@ function makePanelDraggable() {
   });
 }
 
-// Initialize when the page is loaded
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initialize);
-} else {
-  initialize();
-}
+// 添加消息监听器
+  chrome.runtime.onMessage.addListener(function(request, _sender, sendResponse) {
+    console.log('收到消息:', request.action);
 
-} // 闭合防止重复初始化的if语句
+    // 添加一个简单的ping处理，用于检查content.js是否已注入
+    if (request.action === 'ping') {
+      sendResponse({status: 'ok'});
+      return true;
+    }
+
+    // 其他消息处理...
+    switch (request.action) {
+      case 'getVideoCount':
+        sendResponse({videoCount: videoElements.length});
+        break;
+
+      case 'startCapture':
+        startCapture(request.settings);
+        sendResponse({success: true});
+        break;
+
+      case 'stopCapture':
+        stopCapture();
+        sendResponse({success: true});
+        break;
+
+      case 'startDetection':
+        console.log('开始视频检测，最大尝试次数:', request.maxAttempts);
+        if (request.maxAttempts) {
+          maxDetectionAttempts = request.maxAttempts;
+        }
+        startContinuousDetection();
+        sendResponse({success: true});
+        break;
+
+      case 'stopDetection':
+        console.log('停止视频检测');
+        stopContinuousDetection();
+        sendResponse({success: true});
+        break;
+
+      case 'getStatus':
+        sendResponse({
+          isCapturing: captureInterval !== null,
+          isPaused: capturePaused,
+          captureCount: captureCount,
+          videoDetected: videoElements.length > 0,
+          videoCount: videoElements.length,
+          isDetecting: isDetectionActive
+        });
+        break;
+    }
+    return true; // Keep the message channel open for async responses
+  });
+
+  // Initialize when the page is loaded
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initialize);
+  } else {
+    initialize();
+  }
+})(); // 立即执行函数结束

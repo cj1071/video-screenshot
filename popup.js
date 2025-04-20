@@ -174,8 +174,35 @@ document.addEventListener('DOMContentLoaded', function() {
       // 如果正在检测，则停止检测
       stopDetection();
     } else {
-      // 否则开始检测
-      startDetection();
+      // 否则先检查content.js是否已经注入，再开始检测
+      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+        if (!tabs || tabs.length === 0) return;
+
+        // 先检查content.js是否已经注入
+        chrome.tabs.sendMessage(tabs[0].id, {action: 'ping'}, function(response) {
+          if (chrome.runtime.lastError) {
+            console.log('检测到content.js未注入，先注入脚本');
+            // content.js未注入，先注入
+            injectContentScript(tabs[0].id, function(success) {
+              if (success) {
+                // 注入成功后开始检测
+                console.log('content.js注入成功，开始检测');
+                setTimeout(function() {
+                  startDetection();
+                }, 500); // 等待脚本初始化
+              } else {
+                console.error('注入content.js失败，无法检测视频');
+                statusElement.textContent = '状态: 无法检测视频，请刷新页面后重试';
+                buttonHintElement.textContent = '提示: 无法检测视频，请刷新页面后重试';
+              }
+            });
+          } else {
+            // content.js已注入，直接开始检测
+            console.log('content.js已注入，直接开始检测');
+            startDetection();
+          }
+        });
+      });
     }
   });
 
@@ -321,12 +348,17 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       try {
-        chrome.tabs.sendMessage(tabs[0].id, {action: 'getDetectionStatus'}, function(response) {
+        chrome.tabs.sendMessage(tabs[0].id, {action: 'getStatus'}, function(response) {
           // 检查runtime.lastError
           if (chrome.runtime.lastError) {
             console.log('发送消息错误:', chrome.runtime.lastError.message);
             // 尝试注入content script
-            injectContentScript(tabs[0].id, function() {
+            injectContentScript(tabs[0].id, function(success) {
+              if (!success) {
+                console.error('注入content script失败，停止检测');
+                stopDetection();
+                return;
+              }
               // 注入后等待一会再重试
               setTimeout(checkDetectionStatus, 500);
             });
@@ -337,13 +369,12 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('检测状态:', response);
 
             // 更新状态显示
-
-            if (response.found) {
+            if (response.videoDetected || response.videoCount > 0) {
               // 如果找到视频，启用开始截图按钮，禁用检测视频按钮
               startButton.disabled = false;
               detectButton.disabled = true; // 禁用检测视频按钮
-              statusElement.textContent = `状态: 已检测到 ${response.count} 个视频`;
-              videoCountElement.textContent = `检测到的视频: ${response.count}`;
+              statusElement.textContent = `状态: 已检测到 ${response.videoCount} 个视频`;
+              videoCountElement.textContent = `检测到的视频: ${response.videoCount}`;
 
               // 更新提示文本
               buttonHintElement.textContent = '提示: 点击"开始截图"按钮开始截取视频画面';
@@ -354,11 +385,13 @@ document.addEventListener('DOMContentLoaded', function() {
               detectButton.classList.remove('detecting');
 
               // 将视频检测状态保存到存储中
-              chrome.storage.local.set({videoDetected: true, videoCount: response.count});
+              chrome.storage.local.set({videoDetected: true, videoCount: response.videoCount});
 
-              return; // 不再调用stopDetection()，因为content.js已经停止了检测
-            } else if (response.attempts >= maxDetectionAttempts) {
-              // 如果达到最大尝试次数，停止检测
+              // 发送停止检测消息给content.js，确保检测已停止
+              chrome.tabs.sendMessage(tabs[0].id, {action: 'stopDetection'});
+              return;
+            } else if (response.isDetecting === false || continuousDetectionCount >= maxDetectionAttempts) {
+              // 如果检测已经停止或达到最大尝试次数，停止检测
               statusElement.textContent = '状态: 未检测到视频';
 
               // 更新提示文本
@@ -367,7 +400,8 @@ document.addEventListener('DOMContentLoaded', function() {
               stopDetection();
             } else {
               // 继续检测
-              statusElement.textContent = `状态: 正在检测视频 (${response.attempts}/${maxDetectionAttempts})`;
+              continuousDetectionCount++;
+              statusElement.textContent = `状态: 正在检测视频 (${continuousDetectionCount}/${maxDetectionAttempts})`;
 
               // 更新提示文本
               buttonHintElement.textContent = '提示: 正在检测视频，请稍等...';

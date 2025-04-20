@@ -2,7 +2,7 @@
 
 一个强大的 Chrome 扩展程序，可以自动截取网页上播放的视频画面，并保存到本地。
 
-![版本](https://img.shields.io/badge/版本-1.0.3-blue)
+![版本](https://img.shields.io/badge/版本-1.0.7-blue)
 ![许可证](https://img.shields.io/badge/许可证-MIT-green)
 
 ## ✨ 主要功能
@@ -68,6 +68,18 @@
 
 ## 📋 版本历史
 
+### 版本 1.0.7
+- 彻底修复在检测视频结束后仍然继续查找iframe的问题
+- 在detectVideos和detectVideosInIframes函数中添加检测状态判断
+- 改进了startPeriodicIframeCheck函数，在检测停止时不启动新的定时器
+
+### 版本 1.0.5
+- 修改content.js的加载机制，避免在打开配置页面时自动加载
+- 使用web_accessible_resources替代content_scripts，只在需要时才注入content.js
+- 改进了检测视频按钮的点击事件，先检查content.js是否已注入
+
+更详细的版本历史请查看 [version_history.md](version_history.md)
+
 ### 版本 1.0.3
 - 修复 "Receiving end does not exist" 通信错误
 - 修复 "Cannot access a chrome-extension:// URL of different extension" 错误
@@ -120,4 +132,4 @@
 
 ---
 
-*此文档最后更新于：2025年4月*
+*此文档最后更新于：2023年12月*
