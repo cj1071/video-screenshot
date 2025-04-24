@@ -390,7 +390,7 @@ document.addEventListener('DOMContentLoaded', function() {
               // 发送停止检测消息给content.js，确保检测已停止
               chrome.tabs.sendMessage(tabs[0].id, {action: 'stopDetection'});
               return;
-            } else if (response.isDetecting === false || continuousDetectionCount >= maxDetectionAttempts) {
+            } else if (response.isDetecting === false || response.attempts >= maxDetectionAttempts) {
               // 如果检测已经停止或达到最大尝试次数，停止检测
               statusElement.textContent = '状态: 未检测到视频';
 
@@ -400,8 +400,8 @@ document.addEventListener('DOMContentLoaded', function() {
               stopDetection();
             } else {
               // 继续检测
-              continuousDetectionCount++;
-              statusElement.textContent = `状态: 正在检测视频 (${continuousDetectionCount}/${maxDetectionAttempts})`;
+              response.attempts++;
+              statusElement.textContent = `状态: 正在检测视频 (${response.attempts}/${maxDetectionAttempts})`;
 
               // 更新提示文本
               buttonHintElement.textContent = '提示: 正在检测视频，请稍等...';

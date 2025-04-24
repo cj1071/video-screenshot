@@ -425,15 +425,24 @@ function stopCapture() {
     // 重置面板计时器
     panelStartTime = null;
 
-    // 如果还有未合并的截图，合并并下载
+    // 如果还有未合并的截图，弹出审核页面
     if (capturedImages.length > 0) {
-      console.log(`还有 ${capturedImages.length} 张截图未合并，正在合并...`);
-      mergeAndDownloadImages();
+      console.log(`还有 ${capturedImages.length} 张截图未合并，弹出审核页面...`);
+      // 延迟一点时间再弹出审核页面，确保UI更新完成
+      setTimeout(() => {
+        showReviewPanel();
+      }, 300);
     }
 
     // 更新控制面板状态
     updateControlPanelStatus('stopped');
     updateControlPanelButtons(false, false);
+
+    // 更新审核按钮状态
+    const reviewButton = document.getElementById('panel-review');
+    if (reviewButton) {
+      reviewButton.disabled = capturedImages.length === 0;
+    }
 
     // 更新存储中的状态，使弹出窗口可以同步
     chrome.storage.local.set({
@@ -509,6 +518,12 @@ function captureVideoFrame(video, videoIndex) {
     // 更新控制面板计数器
     updateCaptureCount();
 
+    // 更新审核按钮状态
+    const reviewButton = document.getElementById('panel-review');
+    if (reviewButton) {
+      reviewButton.disabled = false;
+    }
+
     console.log('生成截图:', filename, '(尺寸:', canvas.width, 'x', canvas.height, ')');
 
     // 将截图添加到数组中，用于合并
@@ -518,12 +533,21 @@ function captureVideoFrame(video, videoIndex) {
       timestamp: new Date(),
       width: canvas.width,
       height: canvas.height,
-      videoIndex: videoIndex
+      videoIndex: videoIndex,
+      selected: true // 默认选中
     });
 
-    // 检查是否需要合并截图
+    // 检查是否达到合并阈值，但不立即合并，等待审核
+    // 达到阈值时更新审核按钮状态，提示用户可以进行审核
     if (capturedImages.length >= mergeAfterCount) {
-      mergeAndDownloadImages();
+      console.log(`已达到合并阈值 ${mergeAfterCount}，等待人工审核...`);
+      // 确保审核按钮可用
+      const reviewButton = document.getElementById('panel-review');
+      if (reviewButton) {
+        reviewButton.disabled = false;
+        // 闪烁提示用户可以审核
+        reviewButton.style.animation = 'button-flash 1s infinite';
+      }
     }
 
     // 如果设置为保留原始截图，则下载单独的截图
@@ -654,7 +678,16 @@ function mergeAndDownloadImages() {
     return;
   }
 
-  console.log(`开始合并 ${capturedImages.length} 张截图...`);
+  // 过滤出被选中的图片
+  const selectedImages = capturedImages.filter(img => img.selected);
+
+  if (selectedImages.length === 0) {
+    console.log('没有选中的截图可以合并');
+    capturedImages = []; // 清空截图数组
+    return;
+  }
+
+  console.log(`开始合并 ${selectedImages.length} 张选中的截图（共 ${capturedImages.length} 张）...`);
   mergeCount++;
 
   // 获取当前时间作为文件名
@@ -790,7 +823,7 @@ function mergeAndDownloadImages() {
     <div class="header">
       <h1>视频截图集合</h1>
       <p>生成时间: ${new Date().toLocaleString()}</p>
-      <p>共 ${capturedImages.length} 张截图</p>
+      <p>共 ${selectedImages.length} 张截图</p>
     </div>
 
     <!-- 全屏查看模式 -->
@@ -799,7 +832,7 @@ function mergeAndDownloadImages() {
       <img id="fullscreen-image" class="fullscreen-image" onclick="event.stopPropagation()">
       <div class="fullscreen-controls" onclick="event.stopPropagation()">
         <button class="nav-button" onclick="navigateImages(-1)">上一张</button>
-        <span id="image-counter">1 / ${capturedImages.length}</span>
+        <span id="image-counter">1 / ${selectedImages.length}</span>
         <button class="nav-button" onclick="navigateImages(1)">下一张</button>
       </div>
     </div>
@@ -807,8 +840,8 @@ function mergeAndDownloadImages() {
     <div class="grid-container">
   `;
 
-  // 添加每张截图
-  capturedImages.forEach((image, index) => {
+  // 添加每张选中的截图
+  selectedImages.forEach((image, index) => {
     htmlContent += `
     <div class="screenshot-container">
       <img class="screenshot" src="${image.dataURL}" alt="截图 ${index + 1}">
@@ -855,6 +888,12 @@ function mergeAndDownloadImages() {
 
     // 清空截图数组，准备下一批
     capturedImages = [];
+
+    // 更新审核按钮状态
+    const reviewButton = document.getElementById('panel-review');
+    if (reviewButton) {
+      reviewButton.disabled = true;
+    }
   } catch (e) {
     console.log('合并截图时出错:', e.message);
   }
@@ -872,7 +911,7 @@ function startAutoStopTimer() {
   autoStopTimer = setTimeout(() => {
     console.log('到达设定的自动停止时间，正在停止截图...');
     stopCapture();
-    alert('截图已按设定时间自动停止');
+    alert('截图已按设定时间自动停止，请进行图片审核');
   }, milliseconds);
 }
 
@@ -926,6 +965,137 @@ function injectControlPanel() {
   // 创建控制面板样式
   const style = document.createElement('style');
   style.textContent = `
+    /* 按钮闪烁动画 */
+    @keyframes button-flash {
+      0% { background-color: #2196F3; }
+      50% { background-color: #0b7dda; }
+      100% { background-color: #2196F3; }
+    }
+
+    /* 审核面板样式 */
+    .review-panel {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.8);
+      z-index: 9999999;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      overflow: auto;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    .review-panel-header {
+      color: white;
+      margin-bottom: 20px;
+      text-align: center;
+      width: 100%;
+    }
+
+    .review-panel-title {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+
+    .review-panel-subtitle {
+      font-size: 16px;
+      color: #ccc;
+    }
+
+    .review-panel-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 15px;
+      width: 100%;
+      max-width: 1200px;
+      margin-bottom: 20px;
+    }
+
+    .review-image-container {
+      background-color: #333;
+      border-radius: 8px;
+      padding: 10px;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .review-image-container.selected {
+      background-color: #2196F3;
+    }
+
+    .review-image-container:hover {
+      transform: scale(1.02);
+    }
+
+    .review-image {
+      width: 100%;
+      height: auto;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .review-image-info {
+      color: white;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .review-checkbox {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+
+    .review-panel-actions {
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      margin-top: 20px;
+    }
+
+    .review-button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .review-confirm {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .review-confirm:hover {
+      background-color: #3e8e41;
+    }
+
+    .review-cancel {
+      background-color: #f44336;
+      color: white;
+    }
+
+    .review-cancel:hover {
+      background-color: #d32f2f;
+    }
+
+    .review-select-all {
+      background-color: #2196F3;
+      color: white;
+    }
+
+    .review-select-all:hover {
+      background-color: #0b7dda;
+    }
+
     .control-panel {
       position: fixed;
       top: 20px;
@@ -1061,6 +1231,15 @@ function injectControlPanel() {
       background-color: #d32f2f;
     }
 
+    .btn-review-panel {
+      background-color: #2196F3;
+      color: white;
+    }
+
+    .btn-review-panel:hover {
+      background-color: #0b7dda;
+    }
+
     .control-panel-button:disabled {
       background-color: #cccccc;
       cursor: not-allowed;
@@ -1127,6 +1306,9 @@ function injectControlPanel() {
       <button class="control-panel-button btn-pause-panel" id="panel-pause" disabled>暂停</button>
       <button class="control-panel-button btn-stop-panel" id="panel-stop" disabled>停止</button>
     </div>
+    <div class="control-panel-buttons" style="margin-top: 10px;">
+      <button class="control-panel-button btn-review-panel" id="panel-review" disabled>审核截图</button>
+    </div>
     <div class="control-panel-timer" id="auto-stop-timer"></div>
     <div class="control-panel-progress">
       <div class="control-panel-progress-bar" id="auto-stop-progress"></div>
@@ -1141,6 +1323,7 @@ function injectControlPanel() {
   document.getElementById('panel-start').addEventListener('click', startCaptureFromPanel);
   document.getElementById('panel-pause').addEventListener('click', togglePauseCapture);
   document.getElementById('panel-stop').addEventListener('click', stopCaptureFromPanel);
+  document.getElementById('panel-review').addEventListener('click', showReviewPanel);
 
   // 添加拖拽功能
   makePanelDraggable();
@@ -1320,9 +1503,10 @@ function updateControlPanelButtons(isCapturing, isPaused) {
   const startButton = document.getElementById('panel-start');
   const pauseButton = document.getElementById('panel-pause');
   const stopButton = document.getElementById('panel-stop');
+  const reviewButton = document.getElementById('panel-review');
   const statusElement = document.getElementById('panel-status');
 
-  if (!startButton || !pauseButton || !stopButton || !statusElement) {
+  if (!startButton || !pauseButton || !stopButton || !reviewButton || !statusElement) {
     console.log('控制面板元素未找到，可能尚未创建');
     return;
   }
@@ -1347,6 +1531,9 @@ function updateControlPanelButtons(isCapturing, isPaused) {
     pauseButton.textContent = '暂停';
     statusElement.textContent = '已停止';
   }
+
+  // 如果有截图，启用审核按钮
+  reviewButton.disabled = capturedImages.length === 0;
 
   // 同步状态到存储，使弹出窗口可以同步
   chrome.storage.local.set({
@@ -1745,6 +1932,168 @@ function calculateRegionHashes(canvas, ctx) {
 
 // 全局变量来存储上一张图片的区域哈希值
 var lastRegionHashes = null;
+
+// 显示审核面板
+function showReviewPanel() {
+  // 如果没有截图，不显示审核面板
+  if (capturedImages.length === 0) {
+    alert('没有截图可以审核');
+    return;
+  }
+
+  // 检查是否已经存在审核面板
+  let reviewPanel = document.getElementById('screenshot-review-panel');
+  if (reviewPanel) {
+    // 如果已经存在，则更新内容
+    reviewPanel.innerHTML = createReviewPanelContent();
+    reviewPanel.style.display = 'flex';
+  } else {
+    // 创建审核面板
+    reviewPanel = document.createElement('div');
+    reviewPanel.id = 'screenshot-review-panel';
+    reviewPanel.className = 'review-panel';
+    reviewPanel.innerHTML = createReviewPanelContent();
+    document.body.appendChild(reviewPanel);
+
+    // 显示审核面板
+    reviewPanel.style.display = 'flex';
+  }
+
+  // 添加事件监听器
+  addReviewPanelEventListeners();
+}
+
+// 创建审核面板内容
+function createReviewPanelContent() {
+  let content = `
+    <div class="review-panel-header">
+      <h2 class="review-panel-title">截图审核</h2>
+      <p class="review-panel-subtitle">选择要保留的截图，未选中的截图将被删除</p>
+    </div>
+    <div class="review-panel-grid">
+  `;
+
+  // 添加每张截图
+  capturedImages.forEach((image, index) => {
+    content += `
+      <div class="review-image-container ${image.selected ? 'selected' : ''}" data-index="${index}">
+        <img class="review-image" src="${image.dataURL}" alt="截图 ${index + 1}">
+        <input type="checkbox" class="review-checkbox" ${image.selected ? 'checked' : ''}>
+        <div class="review-image-info">
+          <p>截图 #${index + 1} - 视频 #${image.videoIndex + 1}</p>
+          <p>时间: ${image.timestamp.toLocaleString()}</p>
+        </div>
+      </div>
+    `;
+  });
+
+  content += `
+    </div>
+    <div class="review-panel-actions">
+      <button class="review-button review-select-all" id="review-select-all">全选</button>
+      <button class="review-button review-select-all" id="review-deselect-all">取消全选</button>
+      <button class="review-button review-confirm" id="review-confirm">确认并合并</button>
+      <button class="review-button review-cancel" id="review-cancel">取消</button>
+    </div>
+  `;
+
+  return content;
+}
+
+// 添加审核面板事件监听器
+function addReviewPanelEventListeners() {
+  // 图片容器点击事件
+  const containers = document.querySelectorAll('.review-image-container');
+  containers.forEach(container => {
+    container.addEventListener('click', function(e) {
+      // 如果点击的是复选框，不处理
+      if (e.target.classList.contains('review-checkbox')) {
+        return;
+      }
+
+      const index = parseInt(this.dataset.index);
+      const checkbox = this.querySelector('.review-checkbox');
+
+      // 切换选中状态
+      capturedImages[index].selected = !capturedImages[index].selected;
+      checkbox.checked = capturedImages[index].selected;
+
+      // 更新容器样式
+      this.classList.toggle('selected');
+    });
+  });
+
+  // 复选框点击事件
+  const checkboxes = document.querySelectorAll('.review-checkbox');
+  checkboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', function() {
+      const container = this.closest('.review-image-container');
+      const index = parseInt(container.dataset.index);
+
+      // 更新选中状态
+      capturedImages[index].selected = this.checked;
+
+      // 更新容器样式
+      container.classList.toggle('selected', this.checked);
+    });
+  });
+
+  // 全选按钮
+  document.getElementById('review-select-all').addEventListener('click', function() {
+    capturedImages.forEach(image => image.selected = true);
+
+    // 更新UI
+    document.querySelectorAll('.review-image-container').forEach(container => {
+      container.classList.add('selected');
+      container.querySelector('.review-checkbox').checked = true;
+    });
+  });
+
+  // 取消全选按钮
+  document.getElementById('review-deselect-all').addEventListener('click', function() {
+    capturedImages.forEach(image => image.selected = false);
+
+    // 更新UI
+    document.querySelectorAll('.review-image-container').forEach(container => {
+      container.classList.remove('selected');
+      container.querySelector('.review-checkbox').checked = false;
+    });
+  });
+
+  // 确认按钮
+  document.getElementById('review-confirm').addEventListener('click', function() {
+    // 检查是否有选中的图片
+    const selectedCount = capturedImages.filter(img => img.selected).length;
+
+    if (selectedCount === 0) {
+      alert('请至少选择一张图片');
+      return;
+    }
+
+    // 合并选中的图片
+    mergeAndDownloadImages();
+
+    // 关闭审核面板
+    hideReviewPanel();
+
+    // 停止审核按钮闪烁
+    const reviewButton = document.getElementById('panel-review');
+    if (reviewButton) {
+      reviewButton.style.animation = 'none';
+    }
+  });
+
+  // 取消按钮
+  document.getElementById('review-cancel').addEventListener('click', hideReviewPanel);
+}
+
+// 隐藏审核面板
+function hideReviewPanel() {
+  const reviewPanel = document.getElementById('screenshot-review-panel');
+  if (reviewPanel) {
+    reviewPanel.style.display = 'none';
+  }
+}
 
 // 使控制面板可拖拽
 function makePanelDraggable() {
