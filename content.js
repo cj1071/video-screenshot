@@ -30,6 +30,10 @@ var mergeAfterCount = 20; // 每收集20张截图合并一次
 var mergeCount = 0; // 合并文件计数器
 var keepOriginals = true; // 是否保留原始截图
 
+// 审核面板分页相关变量
+var reviewPageSize = 20; // 每页显示的图片数量
+var currentReviewPage = 1; // 当前页码
+
 // 自动停止相关变量
 var autoStopTimer = null;
 var autoStopMinutes = 0;
@@ -308,8 +312,25 @@ function startCapture(settings) {
   imageFormat = settings.format;
   mergeAfterCount = settings.mergeCount || 20; // 如果没有设置，默认为20
   keepOriginals = settings.keepOriginals !== undefined ? settings.keepOriginals : true; // 默认保留原始截图
-  enableAutoStop = settings.enableAutoStop || false;
-  autoStopMinutes = settings.autoStopMinutes || 0;
+
+  // 确保正确解析自动停止设置
+  enableAutoStop = settings.enableAutoStop !== undefined ? Boolean(settings.enableAutoStop) : false;
+  autoStopMinutes = settings.autoStopMinutes !== undefined ? Number(settings.autoStopMinutes) : 0;
+
+  // 打印详细的设置信息
+  console.log('截图设置详情:', {
+    captureIntervalTime,
+    imageQuality,
+    imageFormat,
+    mergeAfterCount,
+    keepOriginals,
+    enableAutoStop,
+    autoStopMinutes,
+    原始值: {
+      enableAutoStop: settings.enableAutoStop,
+      autoStopMinutes: settings.autoStopMinutes
+    }
+  });
 
   // 重复图片检测设置
   enableDuplicateDetection = settings.enableDuplicateDetection !== undefined ? settings.enableDuplicateDetection : true;
@@ -333,11 +354,16 @@ function startCapture(settings) {
   capturePaused = false;
 
   // 更新存储中的状态，使弹出窗口可以同步
-  chrome.storage.local.set({
-    isCapturing: true,
-    isPaused: false,
-    captureCount: captureCount
-  });
+  try {
+    chrome.storage.local.set({
+      isCapturing: true,
+      isPaused: false,
+      captureCount: captureCount
+    });
+  } catch (error) {
+    console.error('更新存储状态时出错:', error);
+    // 错误处理：如果扩展上下文无效，不阻止主要功能继续运行
+  }
 
   console.log('开始截图设置:');
   console.log('- 截图间隔:', settings.interval, '秒 (', captureIntervalTime, '毫秒)');
@@ -400,8 +426,12 @@ function startCapture(settings) {
   }
 
   // 设置自动停止定时器
+  console.log('自动停止设置检查:', { enableAutoStop, autoStopMinutes });
   if (enableAutoStop && autoStopMinutes > 0) {
+    console.log('启动自动停止定时器...');
     startAutoStopTimer();
+  } else {
+    console.log('未启动自动停止定时器，条件不满足');
   }
 }
 
@@ -441,7 +471,9 @@ function stopCapture() {
     // 更新审核按钮状态
     const reviewButton = document.getElementById('panel-review');
     if (reviewButton) {
-      reviewButton.disabled = capturedImages.length === 0;
+      // 不禁用审核按钮，即使没有截图
+      // 这样用户可以点击查看空的审核面板
+      reviewButton.disabled = false;
     }
 
     // 更新存储中的状态，使弹出窗口可以同步
@@ -521,6 +553,7 @@ function captureVideoFrame(video, videoIndex) {
     // 更新审核按钮状态
     const reviewButton = document.getElementById('panel-review');
     if (reviewButton) {
+      // 确保审核按钮始终可用，只要有截图
       reviewButton.disabled = false;
     }
 
@@ -576,17 +609,27 @@ function captureVideoFrame(video, videoIndex) {
         console.log('使用临时链接下载失败，尝试使用background脚本:', directDownloadError.message);
 
         // 如果直接下载失败，尝试使用background脚本
-        chrome.runtime.sendMessage({
-          action: 'downloadScreenshot',
-          dataURL: dataURL,
-          filename: filename
-        }, function(response) {
-          if (response && response.success) {
-            console.log('截图保存成功 (使用background脚本):', filename);
-          } else {
-            console.log('截图保存失败:', response ? response.error : '未知原因');
-          }
-        });
+        try {
+          chrome.runtime.sendMessage({
+            action: 'downloadScreenshot',
+            dataURL: dataURL,
+            filename: filename
+          }, function(response) {
+            if (chrome.runtime.lastError) {
+              console.error('发送消息时出错:', chrome.runtime.lastError);
+              return;
+            }
+
+            if (response && response.success) {
+              console.log('截图保存成功 (使用background脚本):', filename);
+            } else {
+              console.log('截图保存失败:', response ? response.error : '未知原因');
+            }
+          });
+        } catch (error) {
+          console.error('使用background脚本下载失败:', error);
+          // 错误处理：如果扩展上下文无效，不阻止主要功能继续运行
+        }
       }
     } else {
       console.log('已设置不保留原始截图，只在合并后保存');
@@ -605,8 +648,9 @@ function startContinuousDetection() {
 
   // 标记检测开始
   isDetectionActive = true;
-  // 重置计数器
+  // 重置计数器，确保是数字类型
   continuousDetectionCount = 0;
+  console.log('重置检测计数器为:', continuousDetectionCount);
 
   console.log('启动持续视频检测机制...');
 
@@ -683,8 +727,7 @@ function mergeAndDownloadImages() {
 
   if (selectedImages.length === 0) {
     console.log('没有选中的截图可以合并');
-    capturedImages = []; // 清空截图数组
-    return;
+    return; // 不清空截图数组，允许用户重新选择
   }
 
   console.log(`开始合并 ${selectedImages.length} 张选中的截图（共 ${capturedImages.length} 张）...`);
@@ -886,13 +929,15 @@ function mergeAndDownloadImages() {
 
     console.log(`合并截图成功，已保存为 ${mergeFilename}`);
 
-    // 清空截图数组，准备下一批
-    capturedImages = [];
+    // 从截图数组中移除已选中并保存的图片，保留未选中的图片
+    capturedImages = capturedImages.filter(img => !img.selected);
+    console.log(`保存完成，还剩 ${capturedImages.length} 张未保存的截图`);
 
-    // 更新审核按钮状态
+    // 更新审核按钮状态，但不禁用它
     const reviewButton = document.getElementById('panel-review');
     if (reviewButton) {
-      reviewButton.disabled = true;
+      // 停止闪烁动画，但不禁用按钮
+      reviewButton.style.animation = 'none';
     }
   } catch (e) {
     console.log('合并截图时出错:', e.message);
@@ -901,18 +946,38 @@ function mergeAndDownloadImages() {
 
 // 启动自动停止定时器
 function startAutoStopTimer() {
+  // 清除可能存在的旧定时器
   if (autoStopTimer) {
+    console.log('清除已存在的自动停止定时器');
     clearTimeout(autoStopTimer);
+    autoStopTimer = null;
+  }
+
+  // 确保参数有效
+  if (!enableAutoStop || autoStopMinutes <= 0) {
+    console.log('自动停止参数无效，不设置定时器', { enableAutoStop, autoStopMinutes });
+    return;
   }
 
   const milliseconds = autoStopMinutes * 60 * 1000;
-  console.log(`设置自动停止定时器: ${autoStopMinutes} 分钟`);
+  console.log(`设置自动停止定时器: ${autoStopMinutes} 分钟 (${milliseconds} 毫秒)`);
 
-  autoStopTimer = setTimeout(() => {
-    console.log('到达设定的自动停止时间，正在停止截图...');
-    stopCapture();
-    alert('截图已按设定时间自动停止，请进行图片审核');
-  }, milliseconds);
+  try {
+    // 使用箭头函数保持this上下文
+    autoStopTimer = setTimeout(() => {
+      console.log('到达设定的自动停止时间，正在停止截图...');
+      // 确保定时器已完成，设为null
+      autoStopTimer = null;
+      // 调用停止函数
+      stopCapture();
+      // 显示提示
+      alert('截图已按设定时间自动停止，请进行图片审核');
+    }, milliseconds);
+
+    console.log('自动停止定时器已设置，ID:', autoStopTimer);
+  } catch (error) {
+    console.error('设置自动停止定时器时出错:', error);
+  }
 }
 
 // 暂停截图
@@ -1053,6 +1118,31 @@ function injectControlPanel() {
       cursor: pointer;
     }
 
+    .review-delete-btn {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      width: 24px;
+      height: 24px;
+      background-color: #f44336;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      opacity: 0.8;
+      transition: all 0.2s ease;
+    }
+
+    .review-delete-btn:hover {
+      opacity: 1;
+      transform: scale(1.1);
+    }
+
     .review-panel-actions {
       display: flex;
       justify-content: center;
@@ -1094,6 +1184,39 @@ function injectControlPanel() {
 
     .review-select-all:hover {
       background-color: #0b7dda;
+    }
+
+    .review-pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 15px 0;
+      color: white;
+    }
+
+    .review-pagination-button {
+      background-color: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 10px;
+      margin: 0 5px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .review-pagination-button:hover {
+      background-color: #0b7dda;
+    }
+
+    .review-pagination-button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+
+    .review-pagination-info {
+      margin: 0 10px;
+      font-size: 14px;
     }
 
     .control-panel {
@@ -1404,11 +1527,21 @@ function startCaptureFromPanel() {
         mergeCount: result.mergeCount || 20,
         mergeFormat: result.mergeFormat || 'html',
         keepOriginals: result.keepOriginals !== undefined ? result.keepOriginals : false,
-        autoStopMinutes: result.autoStopMinutes || 0,
-        enableAutoStop: result.enableAutoStop || false,
+        autoStopMinutes: result.autoStopMinutes !== undefined ? result.autoStopMinutes : 0,
+        enableAutoStop: result.enableAutoStop !== undefined ? result.enableAutoStop : false,
         duplicateThreshold: result.duplicateThreshold || 90,
         enableDuplicateDetection: result.enableDuplicateDetection !== undefined ? result.enableDuplicateDetection : true
       };
+
+      // 打印自动停止设置，用于调试
+      console.log('从控制面板开始截图，自动停止设置:', {
+        autoStopMinutes: settings.autoStopMinutes,
+        enableAutoStop: settings.enableAutoStop,
+        原始值: {
+          autoStopMinutes: result.autoStopMinutes,
+          enableAutoStop: result.enableAutoStop
+        }
+      });
 
       startCapture(settings);
 
@@ -1633,6 +1766,15 @@ function updatePanelTimer() {
       const totalSeconds = autoStopMinutes * 60;
       const remainingSeconds = totalSeconds - elapsedTime;
 
+      // 显示调试信息
+      console.log('更新自动停止进度条:', {
+        enableAutoStop,
+        autoStopMinutes,
+        totalSeconds,
+        elapsedTime,
+        remainingSeconds
+      });
+
       if (remainingSeconds > 0) {
         const progress = ((totalSeconds - remainingSeconds) / totalSeconds) * 100;
         const progressBar = document.getElementById('auto-stop-progress');
@@ -1641,13 +1783,21 @@ function updatePanelTimer() {
         }
 
         const remainingMinutes = Math.floor(remainingSeconds / 60);
-        const remainingSecs = remainingSeconds % 60;
+        const remainingSecs = Math.floor(remainingSeconds % 60);
         const timerElement = document.getElementById('auto-stop-timer');
         if (timerElement) {
           timerElement.textContent =
             `自动停止倒计时: ${remainingMinutes}:${remainingSecs < 10 ? '0' + remainingSecs : remainingSecs}`;
+          // 确保元素可见
+          timerElement.style.display = 'block';
         }
       }
+    } else {
+      // 如果自动停止未启用，隐藏相关元素
+      const timerElement = document.getElementById('auto-stop-timer');
+      const progressBar = document.getElementById('auto-stop-progress');
+      if (timerElement) timerElement.style.display = 'none';
+      if (progressBar) progressBar.style.width = '0%';
     }
   }
 }
@@ -1695,7 +1845,7 @@ chrome.runtime.onMessage.addListener(function(request, _sender, sendResponse) {
       sendResponse({
         found: videoElements.length > 0,
         count: videoElements.length,
-        attempts: continuousDetectionCount,
+        attempts: continuousDetectionCount || 0, // 确保返回有效数字
         active: isDetectionActive
       });
       break;
@@ -1935,9 +2085,26 @@ var lastRegionHashes = null;
 
 // 显示审核面板
 function showReviewPanel() {
-  // 如果没有截图，不显示审核面板
+  // 如果没有截图，显示提示但不阻止打开审核面板
+  // 这样用户可以看到空的审核面板，知道当前没有截图
   if (capturedImages.length === 0) {
-    alert('没有截图可以审核');
+    // 创建或更新审核面板，显示"没有截图"的提示
+    let reviewPanel = document.getElementById('screenshot-review-panel');
+    if (reviewPanel) {
+      reviewPanel.innerHTML = createEmptyReviewPanelContent();
+      reviewPanel.style.display = 'flex';
+    } else {
+      reviewPanel = document.createElement('div');
+      reviewPanel.id = 'screenshot-review-panel';
+      reviewPanel.className = 'review-panel';
+      reviewPanel.innerHTML = createEmptyReviewPanelContent();
+      document.body.appendChild(reviewPanel);
+      reviewPanel.style.display = 'flex';
+    }
+
+    // 添加关闭按钮的事件监听器
+    document.getElementById('review-cancel-empty').addEventListener('click', hideReviewPanel);
+
     return;
   }
 
@@ -1963,24 +2130,74 @@ function showReviewPanel() {
   addReviewPanelEventListeners();
 }
 
+// 创建空的审核面板内容
+function createEmptyReviewPanelContent() {
+  return `
+    <div class="review-panel-header">
+      <h2 class="review-panel-title">截图审核</h2>
+      <p class="review-panel-subtitle">当前没有可审核的截图。继续截图后，新的截图将会显示在这里。</p>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; color: white;">
+      <div style="font-size: 24px; margin-bottom: 20px;">📷</div>
+      <div style="font-size: 18px; text-align: center;">没有可审核的截图</div>
+      <div style="font-size: 14px; color: #aaa; margin-top: 10px; text-align: center;">继续截图或关闭此面板</div>
+    </div>
+    <div class="review-panel-actions">
+      <button class="review-button review-cancel" id="review-cancel-empty">关闭</button>
+    </div>
+  `;
+}
+
 // 创建审核面板内容
 function createReviewPanelContent() {
+  // 计算总页数
+  const totalPages = Math.ceil(capturedImages.length / reviewPageSize);
+
+  // 确保当前页码在有效范围内
+  if (currentReviewPage < 1) currentReviewPage = 1;
+  if (currentReviewPage > totalPages) currentReviewPage = totalPages;
+
+  // 计算当前页的图片范围
+  const startIndex = (currentReviewPage - 1) * reviewPageSize;
+  const endIndex = Math.min(startIndex + reviewPageSize, capturedImages.length);
+
+  // 获取当前页的图片
+  const currentPageImages = capturedImages.slice(startIndex, endIndex);
+
   let content = `
     <div class="review-panel-header">
       <h2 class="review-panel-title">截图审核</h2>
-      <p class="review-panel-subtitle">选择要保留的截图，未选中的截图将被删除</p>
+      <p class="review-panel-subtitle">选择要保存的截图，点击"保存选中图片"后将保存选中的图片。您也可以选择多张图片后点击"删除选中图片"进行批量删除。未选中的图片将保留，可以在下次审核时选择。</p>
     </div>
-    <div class="review-panel-grid">
   `;
 
-  // 添加每张截图
-  capturedImages.forEach((image, index) => {
+  // 添加分页控制
+  if (totalPages > 1) {
     content += `
-      <div class="review-image-container ${image.selected ? 'selected' : ''}" data-index="${index}">
-        <img class="review-image" src="${image.dataURL}" alt="截图 ${index + 1}">
+      <div class="review-pagination">
+        <button class="review-pagination-button" id="review-first-page" ${currentReviewPage === 1 ? 'disabled' : ''}>首页</button>
+        <button class="review-pagination-button" id="review-prev-page" ${currentReviewPage === 1 ? 'disabled' : ''}>上一页</button>
+        <span class="review-pagination-info">第 ${currentReviewPage} 页 / 共 ${totalPages} 页 (${capturedImages.length} 张图片)</span>
+        <button class="review-pagination-button" id="review-next-page" ${currentReviewPage === totalPages ? 'disabled' : ''}>下一页</button>
+        <button class="review-pagination-button" id="review-last-page" ${currentReviewPage === totalPages ? 'disabled' : ''}>末页</button>
+      </div>
+    `;
+  }
+
+  content += `<div class="review-panel-grid">`;
+
+  // 添加当前页的截图
+  currentPageImages.forEach((image, pageIndex) => {
+    // 计算在整个数组中的实际索引
+    const actualIndex = startIndex + pageIndex;
+
+    content += `
+      <div class="review-image-container ${image.selected ? 'selected' : ''}" data-index="${actualIndex}">
+        <img class="review-image" src="${image.dataURL}" alt="截图 ${actualIndex + 1}">
         <input type="checkbox" class="review-checkbox" ${image.selected ? 'checked' : ''}>
+        <button class="review-delete-btn" data-index="${actualIndex}" title="删除此截图">×</button>
         <div class="review-image-info">
-          <p>截图 #${index + 1} - 视频 #${image.videoIndex + 1}</p>
+          <p>截图 #${actualIndex + 1} - 视频 #${image.videoIndex + 1}</p>
           <p>时间: ${image.timestamp.toLocaleString()}</p>
         </div>
       </div>
@@ -1992,8 +2209,9 @@ function createReviewPanelContent() {
     <div class="review-panel-actions">
       <button class="review-button review-select-all" id="review-select-all">全选</button>
       <button class="review-button review-select-all" id="review-deselect-all">取消全选</button>
-      <button class="review-button review-confirm" id="review-confirm">确认并合并</button>
-      <button class="review-button review-cancel" id="review-cancel">取消</button>
+      <button class="review-button review-confirm" id="review-confirm">保存选中图片</button>
+      <button class="review-button review-delete-selected" id="review-delete-selected" style="background-color: #f44336;">删除选中图片</button>
+      <button class="review-button review-cancel" id="review-cancel">关闭</button>
     </div>
   `;
 
@@ -2006,8 +2224,9 @@ function addReviewPanelEventListeners() {
   const containers = document.querySelectorAll('.review-image-container');
   containers.forEach(container => {
     container.addEventListener('click', function(e) {
-      // 如果点击的是复选框，不处理
-      if (e.target.classList.contains('review-checkbox')) {
+      // 如果点击的是复选框或删除按钮，不处理
+      if (e.target.classList.contains('review-checkbox') ||
+          e.target.classList.contains('review-delete-btn')) {
         return;
       }
 
@@ -2020,6 +2239,34 @@ function addReviewPanelEventListeners() {
 
       // 更新容器样式
       this.classList.toggle('selected');
+    });
+  });
+
+  // 删除按钮点击事件
+  const deleteButtons = document.querySelectorAll('.review-delete-btn');
+  deleteButtons.forEach(button => {
+    button.addEventListener('click', function(e) {
+      e.stopPropagation(); // 阻止事件冒泡
+
+      const index = parseInt(this.dataset.index);
+
+      // 确认删除
+      if (confirm('确定要删除这张截图吗？')) {
+        // 从数组中移除该图片
+        if (index >= 0 && index < capturedImages.length) {
+          capturedImages.splice(index, 1);
+
+          // 重新渲染审核面板
+          const reviewPanel = document.getElementById('screenshot-review-panel');
+          if (reviewPanel) {
+            reviewPanel.innerHTML = createReviewPanelContent();
+            addReviewPanelEventListeners();
+          }
+        } else {
+          console.error('删除图片时索引无效:', index, '数组长度:', capturedImages.length);
+          alert('删除失败：图片索引无效，请刷新页面后重试');
+        }
+      }
     });
   });
 
@@ -2073,18 +2320,116 @@ function addReviewPanelEventListeners() {
     // 合并选中的图片
     mergeAndDownloadImages();
 
-    // 关闭审核面板
-    hideReviewPanel();
-
     // 停止审核按钮闪烁
     const reviewButton = document.getElementById('panel-review');
     if (reviewButton) {
       reviewButton.style.animation = 'none';
     }
+
+    // 如果没有剩余图片，关闭审核面板
+    if (capturedImages.length === 0) {
+      hideReviewPanel();
+    } else {
+      // 否则，刷新审核面板显示剩余图片
+      const reviewPanel = document.getElementById('screenshot-review-panel');
+      if (reviewPanel) {
+        reviewPanel.innerHTML = createReviewPanelContent();
+        addReviewPanelEventListeners();
+      }
+    }
   });
+
+  // 删除选中图片按钮
+  document.getElementById('review-delete-selected').addEventListener('click', function() {
+    // 检查是否有选中的图片
+    const selectedCount = capturedImages.filter(img => img.selected).length;
+
+    if (selectedCount === 0) {
+      alert('请至少选择一张图片进行删除');
+      return;
+    }
+
+    // 确认删除
+    if (confirm(`确定要删除选中的 ${selectedCount} 张图片吗？`)) {
+      try {
+        // 从数组中移除选中的图片
+        capturedImages = capturedImages.filter(img => !img.selected);
+        console.log(`已删除 ${selectedCount} 张图片，剩余 ${capturedImages.length} 张`);
+
+        // 如果没有剩余图片，关闭审核面板
+        if (capturedImages.length === 0) {
+          hideReviewPanel();
+
+          // 更新审核按钮状态，但不禁用它
+          // 这样当有新截图时，用户仍然可以点击审核按钮
+          const reviewButton = document.getElementById('panel-review');
+          if (reviewButton) {
+            // 停止闪烁动画，但不禁用按钮
+            reviewButton.style.animation = 'none';
+          }
+        } else {
+          // 否则，刷新审核面板显示剩余图片
+          const reviewPanel = document.getElementById('screenshot-review-panel');
+          if (reviewPanel) {
+            reviewPanel.innerHTML = createReviewPanelContent();
+            addReviewPanelEventListeners();
+          }
+        }
+      } catch (error) {
+        console.error('删除选中图片时出错:', error);
+        alert('删除图片时出错，请刷新页面后重试');
+      }
+    }
+  });
+
+  // 分页按钮事件监听器
+  if (document.getElementById('review-first-page')) {
+    // 首页按钮
+    document.getElementById('review-first-page').addEventListener('click', function() {
+      if (currentReviewPage > 1) {
+        currentReviewPage = 1;
+        refreshReviewPanel();
+      }
+    });
+
+    // 上一页按钮
+    document.getElementById('review-prev-page').addEventListener('click', function() {
+      if (currentReviewPage > 1) {
+        currentReviewPage--;
+        refreshReviewPanel();
+      }
+    });
+
+    // 下一页按钮
+    document.getElementById('review-next-page').addEventListener('click', function() {
+      const totalPages = Math.ceil(capturedImages.length / reviewPageSize);
+      if (currentReviewPage < totalPages) {
+        currentReviewPage++;
+        refreshReviewPanel();
+      }
+    });
+
+    // 末页按钮
+    document.getElementById('review-last-page').addEventListener('click', function() {
+      const totalPages = Math.ceil(capturedImages.length / reviewPageSize);
+      if (currentReviewPage < totalPages) {
+        currentReviewPage = totalPages;
+        refreshReviewPanel();
+      }
+    });
+  }
 
   // 取消按钮
   document.getElementById('review-cancel').addEventListener('click', hideReviewPanel);
+}
+
+// 刷新审核面板
+function refreshReviewPanel() {
+  const reviewPanel = document.getElementById('screenshot-review-panel');
+  if (reviewPanel) {
+    reviewPanel.innerHTML = createReviewPanelContent();
+    addReviewPanelEventListeners();
+  }
 }
 
 // 隐藏审核面板
@@ -2182,7 +2527,8 @@ function makePanelDraggable() {
 }
 
 // 添加消息监听器
-  chrome.runtime.onMessage.addListener(function(request, _sender, sendResponse) {
+chrome.runtime.onMessage.addListener(function(request, _sender, sendResponse) {
+  try {
     console.log('收到消息:', request.action);
 
     // 添加一个简单的ping处理，用于检查content.js是否已注入
@@ -2229,17 +2575,28 @@ function makePanelDraggable() {
           captureCount: captureCount,
           videoDetected: videoElements.length > 0,
           videoCount: videoElements.length,
-          isDetecting: isDetectionActive
+          isDetecting: isDetectionActive,
+          attempts: continuousDetectionCount || 0 // 添加检测次数，确保是有效数字
         });
         break;
     }
     return true; // Keep the message channel open for async responses
-  });
-
-  // Initialize when the page is loaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initialize);
-  } else {
-    initialize();
+  } catch (error) {
+    console.error('处理消息时出错:', error);
+    // 尝试发送错误响应
+    try {
+      sendResponse({error: 'Extension context invalidated'});
+    } catch (e) {
+      console.error('无法发送错误响应:', e);
+    }
+    return false;
   }
+});
+
+// Initialize when the page is loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
+} else {
+  initialize();
+}
 })(); // 立即执行函数结束

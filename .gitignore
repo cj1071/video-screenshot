@@ -1,0 +1,26 @@
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器文件
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# 临时文件
+*.log
+*.tmp
+*.temp
+
+# 打包文件
+*.zip
+*.crx
+*.pem
+
+# 其他
+node_modules/
+dist/
+build/
+.env

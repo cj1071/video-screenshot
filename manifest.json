@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Video Screenshot Capture",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Automatically captures screenshots of videos playing on webpages at configurable intervals",
   "permissions": ["downloads", "activeTab", "scripting", "storage", "tabs"],
   "action": {

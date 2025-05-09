@@ -400,8 +400,11 @@ document.addEventListener('DOMContentLoaded', function() {
               stopDetection();
             } else {
               // 继续检测
-              response.attempts++;
-              statusElement.textContent = `状态: 正在检测视频 (${response.attempts}/${maxDetectionAttempts})`;
+              // 确保attempts是有效的数字
+              const attempts = (response.attempts !== undefined && !isNaN(response.attempts)) ?
+                              response.attempts + 1 : 1;
+
+              statusElement.textContent = `状态: 正在检测视频 (${attempts}/${maxDetectionAttempts})`;
 
               // 更新提示文本
               buttonHintElement.textContent = '提示: 正在检测视频，请稍等...';
